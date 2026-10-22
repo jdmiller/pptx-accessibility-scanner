@@ -18,6 +18,7 @@ Dependencies:
 - LibreOffice (soffice) and Poppler for screenshots
   (Mac: brew install poppler; Linux: apt-get install poppler-utils)
 - Tesseract, optional, for --ocr
+- Ollama with a vision model, optional, for --ai-alt-check (see ai_alt_check.py)
 
 Usage:
 python resource_scanner.py /path/to/presentations --mode strict
@@ -40,9 +41,13 @@ from PIL import Image
 import pytesseract
 from datetime import datetime
 from tqdm import tqdm
+from ai_alt_check import AltTextReviewer, DEFAULT_MODEL, DEFAULT_HOST
 
 # Global cache for contrast calculations
 _contrast_cache = {}
+
+# Set in main() when --ai-alt-check is on.
+AI_REVIEWER = None
 
 # Issue severity levels (for per-slide impact)
 ISSUE_SEVERITY = {
@@ -66,6 +71,9 @@ ISSUE_SEVERITY = {
     'auto_advance_transition': 'minor',
     'excessive_animations': 'minor',
     'auto_play_animation': 'minor',
+
+    # For human review only: flagged by the optional AI check, never scored.
+    'ai_alt_review': 'review',
 }
 
 # Per-slide deduction by severity (how much one issue hurts a single slide)
@@ -74,6 +82,7 @@ SLIDE_DEDUCTIONS = {
     'severe': 70,   # One severe issue reduces slide score by 70% (critical accessibility barrier)
     'major': 45,    # One major issue reduces slide score by 45% (significant usability problem)
     'minor': 20,    # One minor issue reduces slide score by 20% (best practice violation)
+    'review': 0,    # AI flags are prompts for a person, not findings
 }
 
 # Issue categories for grouping
@@ -93,6 +102,7 @@ ISSUE_CATEGORIES = {
     'auto_advance_transition': 'Animations & Timing',
     'excessive_animations': 'Animations & Timing',
     'auto_play_animation': 'Animations & Timing',
+    'ai_alt_review': 'Images & Media',
 }
 
 # How to fix instructions for each issue type
@@ -103,7 +113,7 @@ FIX_INSTRUCTIONS = {
             'Right-click the image, chart, table, or diagram',
             'Select "Edit Alt Text" or "Format Picture"',
             'In the Alt Text pane, add a brief description of the image',
-            'If the image is purely decorative, leave the alt text field empty (don\'t write "decorative")',
+            'If the image is purely decorative, check "Mark as decorative" in the Alt Text pane instead of leaving the description empty',
             'Good alt text is concise (1-2 sentences) and describes the content and function of the image'
         ],
         'wcag': 'WCAG 2.2 - 1.1.1 Non-text Content'
@@ -263,6 +273,16 @@ FIX_INSTRUCTIONS = {
         ],
         'wcag': 'WCAG 2.2 - 2.2.2 Pause, Stop, Hide'
     },
+    'ai_alt_review': {
+        'title': 'How to Review: AI-Flagged Alt Text',
+        'steps': [
+            'Open the slide and compare the image with its alt text',
+            'Check that the alt text conveys what the image is there to show, including any words, numbers or trends',
+            'Rewrite the alt text if it misses that; otherwise leave it as it is',
+            'This flag comes from an AI model and can be wrong. A person decides.'
+        ],
+        'wcag': 'WCAG 2.2 - 1.1.1 Non-text Content'
+    }
 }
 
 def parse_args():
@@ -280,6 +300,15 @@ def parse_args():
                         help='Show detailed error messages for screenshot failures')
     parser.add_argument('--expected-language', default='en-US',
                         help='Expected language code for the presentation (default: en-US)')
+    parser.add_argument('--ai-alt-check', action='store_true',
+                        help='Ask a local vision model (Ollama) whether existing alt text describes each image. '
+                             'Flags are for human review and do not affect scores.')
+    parser.add_argument('--ai-model', default=DEFAULT_MODEL,
+                        help=f'Ollama vision model for --ai-alt-check (default: {DEFAULT_MODEL})')
+    parser.add_argument('--ai-host', default=DEFAULT_HOST,
+                        help=f'Ollama URL for --ai-alt-check (default: {DEFAULT_HOST})')
+    parser.add_argument('--ai-cache', default='.ai_alt_review_cache.json',
+                        help='Where to cache AI review results between scans')
     return parser.parse_args()
 
 def get_luminance(rgb):
@@ -296,6 +325,12 @@ def get_contrast_ratio(rgb1, rgb2):
     darker = min(L1, L2)
     return (lighter + 0.05) / (darker + 0.05)
 
+# Labels that .title() would get wrong ("Ai Alt Review").
+ISSUE_LABELS = {'ai_alt_review': 'AI Review: Alt Text'}
+
+def issue_label(issue_type):
+    return ISSUE_LABELS.get(issue_type, issue_type.replace('_', ' ').title())
+
 def has_poor_quality_alt_text(alt_text):
     if not alt_text:
         return False
@@ -307,9 +342,6 @@ def has_poor_quality_alt_text(alt_text):
     if len(alt_text) < 5:
         return True
     if any(alt_lower == indicator for indicator in poor_indicators):
-        return True
-    # A file name ("chart.png", "IMG_1234.JPG") describes the file, not the image.
-    if re.fullmatch(r'\S+\.(png|jpe?g|gif|bmp|tiff?|svg|emf|wmf|webp|heic)', alt_lower):
         return True
     # PowerPoint's default shape names ("Picture 3") aren't descriptions either.
     if re.fullmatch(r'(picture|image|graphic|chart|diagram) ?\d+', alt_lower):
@@ -440,13 +472,16 @@ def update_rollup_reports(output_dir, books, book_scores, book_slide_counts, boo
     # Even if no instances are found, we want to show 0 to indicate the check was performed
     # This ensures consistent table structure across all scans
     for issue_type in ISSUE_SEVERITY.keys():
+        # The AI column only means something when that check ran.
+        if issue_type == 'ai_alt_review' and AI_REVIEWER is None:
+            continue
         all_issue_types.add(issue_type)
     
     # Sort issues by severity (severe, major, minor), then alphabetically
     # This groups related issues together (e.g., insufficient_headings and missing_title)
     def sort_by_severity(issue_type):
         severity = ISSUE_SEVERITY.get(issue_type, 'minor')
-        severity_order = {'severe': 0, 'major': 1, 'minor': 2}
+        severity_order = {'severe': 0, 'major': 1, 'minor': 2, 'review': 3}
         return (severity_order.get(severity, 3), issue_type)
     
     all_issue_types = sorted(all_issue_types, key=sort_by_severity)
@@ -734,11 +769,22 @@ def audit_pptx_fast(pptx_path, mode='lenient', expected_language='en-US'):
             
             # Check images for alt text and scanned images
             if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                # Marked decorative in PowerPoint: screen readers skip it, so no alt text is needed.
+                if is_decorative(shape):
+                    continue
                 alt_text = get_alt_text_from_shape(shape)
                 if not alt_text or alt_text.strip() == '':
-                    issues_by_slide[slide_idx].append(('missing_alt_text', f'Image "{shape.name}" has no alt text'))
+                    issues_by_slide[slide_idx].append(('missing_alt_text', f'Image "{shape.name}" has no alt text and isn\'t marked as decorative'))
                 elif mode == 'strict' and has_poor_quality_alt_text(alt_text):
                     issues_by_slide[slide_idx].append(('poor_alt_text', f'Image "{shape.name}" has poor quality alt text'))
+                elif AI_REVIEWER is not None:
+                    try:
+                        title, context = slide_context(slide)
+                        reason = AI_REVIEWER.review(shape.image.blob, shape.image.content_type, alt_text, title, context)
+                        if reason:
+                            issues_by_slide[slide_idx].append(('ai_alt_review', f'Image "{shape.name}" (alt text: "{alt_text[:80]}"): {reason}'))
+                    except Exception:
+                        pass
                 
                 # Check for scanned images (large images covering most of slide)
                 try:
@@ -949,18 +995,58 @@ def audit_pptx_fast(pptx_path, mode='lenient', expected_language='en-US'):
     return issues_by_slide, presentation_issues, total_slides
 
 def get_alt_text_from_shape(shape):
-    """Helper to extract alt text from shape."""
-    if not shape.has_text_frame:
-        alt_text = shape.name
+    """Return a picture's alt text, or "" if it has none.
+
+    Matches the S3 bulk scanner: never fall back to the shape's name
+    ("Picture 2"), and treat a file name ("chart.png") as no alt text.
+    """
+    if shape.has_text_frame:
+        return ""
+    alt_text = ""
+    try:
+        descr = shape._element.xpath('.//p:cNvPr/@descr')
+        if descr:
+            alt_text = descr[0]
+        if not alt_text:
+            title = shape._element.xpath('.//p:cNvPr/@title')
+            if title:
+                alt_text = title[0]
+        if alt_text and re.fullmatch(r'\S+\.(png|jpe?g|gif|bmp|tiff?|svg|emf|wmf|webp|heic)', alt_text.strip().lower()):
+            alt_text = ""
+    except Exception:
+        pass
+    return alt_text
+
+def is_decorative(shape):
+    """True if the picture uses PowerPoint's "Mark as decorative" option.
+
+    PowerPoint stores this as a <decorative val="1"/> extension on the
+    shape's properties. Only this counts as decorative: an empty description
+    on its own is treated as missing alt text, because legacy production
+    scripts often left meaningful images empty.
+    """
+    try:
+        return bool(shape._element.xpath(
+            './/p:cNvPr//*[local-name()="decorative" and (@val="1" or @val="true")]'))
+    except Exception:
+        return False
+
+def slide_context(slide):
+    """The slide's title and other text, to give the AI review some context."""
+    title = ""
+    try:
+        if slide.shapes.title is not None:
+            title = slide.shapes.title.text.strip()
+    except Exception:
+        pass
+    texts = []
+    for shape in slide.shapes:
         try:
-            if hasattr(shape, '_element') and hasattr(shape._element, 'xpath'):
-                alt_text_elem = shape._element.xpath('.//p:cNvPr/@descr')
-                if alt_text_elem:
-                    alt_text = alt_text_elem[0]
-        except:
+            if shape.has_text_frame and shape.text_frame.text.strip() != title:
+                texts.append(shape.text_frame.text.strip())
+        except Exception:
             pass
-        return alt_text
-    return ""
+    return title, " ".join(t for t in texts if t)
 
 def audit_pptx(pptx_path, screenshot_dir, mode='lenient', ocr_enabled=False, expected_language='en-US', no_screenshots=False, verbose=False):
     """
@@ -1074,10 +1160,10 @@ def calculate_accessibility_score(issues_by_slide, presentation_issues, total_sl
             
             slide_scores[slide_num] -= (deduction * multiplier)
             
-            # Count errors vs warnings
+            # Count errors vs warnings (AI review flags are neither)
             if severity in ['severe', 'major']:
                 error_count += 1
-            else:
+            elif severity != 'review':
                 warning_count += 1
     
     # Apply presentation-level issues (percentage penalty to all slides)
@@ -1370,7 +1456,7 @@ def generate_html_report(book_title, files_data, output_path):
                 
                 html += f"""
                   <tr>
-                    <td><strong>{issue_type.replace('_', ' ').title()}</strong></td>
+                    <td><strong>{issue_label(issue_type)}</strong></td>
                     <td><span class="badge bg-{severity_badge_class}">{severity.upper()}</span></td>
                     <td><strong>{count}</strong></td>
                     <td><small class="text-muted">{wcag_ref}</small></td>
@@ -1406,7 +1492,7 @@ def generate_html_report(book_title, files_data, output_path):
                 for issue_type, description in presentation_issues:
                     severity = ISSUE_SEVERITY.get(issue_type, 'minor')
                     severity_class = f'issue-{severity}'
-                    html += f'<li class="{severity_class}" style="padding: 0.5rem; margin: 0.5rem 0; border-radius: 4px;"><strong>{issue_type.replace("_", " ").title()}:</strong> {description}</li>'
+                    html += f'<li class="{severity_class}" style="padding: 0.5rem; margin: 0.5rem 0; border-radius: 4px;"><strong>{issue_label(issue_type)}:</strong> {description}</li>'
                     
                     # Add fix instructions
                     if issue_type in FIX_INSTRUCTIONS:
@@ -1441,7 +1527,7 @@ def generate_html_report(book_title, files_data, output_path):
                     for issue_type, description in issues:
                         severity = ISSUE_SEVERITY.get(issue_type, 'minor')
                         severity_class = f'issue-{severity}'
-                        html += f'<li class="{severity_class}" style="padding: 0.5rem; margin: 0.5rem 0; border-radius: 4px;"><strong>{issue_type.replace("_", " ").title()}:</strong> {description}</li>'
+                        html += f'<li class="{severity_class}" style="padding: 0.5rem; margin: 0.5rem 0; border-radius: 4px;"><strong>{issue_label(issue_type)}:</strong> {description}</li>'
                         
                         # Add fix instructions (only once per issue type)
                         if issue_type in FIX_INSTRUCTIONS and issue_type not in seen_issue_types:
@@ -1544,7 +1630,7 @@ def generate_html_report(book_title, files_data, output_path):
                 
                 html += f"""
                   <tr>
-                    <td><strong>{issue_type.replace('_', ' ').title()}</strong></td>
+                    <td><strong>{issue_label(issue_type)}</strong></td>
                     <td><span class="badge bg-{severity_badge_class}">{severity.upper()}</span></td>
                     <td><strong>{count}</strong></td>
                     <td><small class="text-muted">{wcag_ref}</small></td>
@@ -1580,7 +1666,7 @@ def generate_html_report(book_title, files_data, output_path):
                 for issue_type, description in presentation_issues:
                     severity = ISSUE_SEVERITY.get(issue_type, 'minor')
                     severity_class = f'issue-{severity}'
-                    html += f'<li class="{severity_class}" style="padding: 0.5rem; margin: 0.5rem 0; border-radius: 4px;"><strong>{issue_type.replace("_", " ").title()}:</strong> {description}</li>'
+                    html += f'<li class="{severity_class}" style="padding: 0.5rem; margin: 0.5rem 0; border-radius: 4px;"><strong>{issue_label(issue_type)}:</strong> {description}</li>'
                     
                     # Add fix instructions
                     if issue_type in FIX_INSTRUCTIONS:
@@ -1610,7 +1696,7 @@ def generate_html_report(book_title, files_data, output_path):
                     for issue_type, description in issues:
                         severity = ISSUE_SEVERITY.get(issue_type, 'minor')
                         severity_class = f'issue-{severity}'
-                        html += f'<li class="{severity_class}" style="padding: 0.5rem; margin: 0.5rem 0; border-radius: 4px;"><strong>{issue_type.replace("_", " ").title()}:</strong> {description}</li>'
+                        html += f'<li class="{severity_class}" style="padding: 0.5rem; margin: 0.5rem 0; border-radius: 4px;"><strong>{issue_label(issue_type)}:</strong> {description}</li>'
                         
                         # Add fix instructions (only once per issue type)
                         if issue_type in FIX_INSTRUCTIONS and issue_type not in seen_issue_types:
@@ -1683,7 +1769,7 @@ def generate_rollup_html(csv_path, output_path, output_dir, book_issue_counts):
     
     # Prepare data for D3 visualizations
     category_data = [{'category': k, 'count': int(v)} for k, v in category_totals.items()]
-    issue_type_data = [{'type': k.replace('_', ' ').title(), 'count': int(v)} 
+    issue_type_data = [{'type': issue_label(k), 'count': int(v)} 
                        for k, v in sorted(issue_type_totals.items(), key=lambda x: x[1], reverse=True)[:10]]
     
     html = f"""<!DOCTYPE html>
@@ -1896,7 +1982,7 @@ def generate_rollup_html(csv_path, output_path, output_dir, book_issue_counts):
     
     # Table headers (no severity indicators)
     for col in display_columns:
-        col_display = col.replace('_', ' ').title()
+        col_display = issue_label(col)
         html += f"            <th>{col_display}</th>\n"
     
     html += """          </tr>
@@ -2189,6 +2275,15 @@ def main():
     no_screenshots = args.no_screenshots
     expected_language = args.expected_language
     
+    global AI_REVIEWER
+    if args.ai_alt_check:
+        AI_REVIEWER = AltTextReviewer(model=args.ai_model, host=args.ai_host, cache_path=args.ai_cache)
+        problem = AI_REVIEWER.check_available()
+        if problem:
+            print(f"Error: --ai-alt-check: {problem}")
+            sys.exit(1)
+        print(f"AI alt text review on, using {args.ai_model} at {args.ai_host}. Flags are for human review.")
+
     # Warn if OCR is enabled but screenshots are disabled
     if ocr_enabled and no_screenshots:
         print("Warning: OCR requires screenshots. OCR will be disabled.")
@@ -2312,6 +2407,11 @@ def main():
     print(f"  • Rollup: {rollup_html_path}")
     print(f"  • CSV: {csv_path}")
     print(f"  • Processed {len(book_scores)} collection(s) with {total_files} files")
+    if AI_REVIEWER is not None:
+        AI_REVIEWER.save()
+        st = AI_REVIEWER.stats
+        print(f"  • AI alt text review: {st['reviewed']} reviewed, {st['cached']} from cache, "
+              f"{st['flagged']} flagged for a person to check, {st['skipped']} skipped, {st['errors']} errors")
 
 if __name__ == '__main__':
     main()

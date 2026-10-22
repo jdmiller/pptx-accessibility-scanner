@@ -201,6 +201,10 @@ def audit_pptx_bytes(file_content, filename, strict_mode=False):
 
             # Alt Text
             if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                # "Mark as decorative" in PowerPoint: screen readers skip it. An empty
+                # description alone still counts as missing (legacy files often have them).
+                if shape._element.xpath('.//p:cNvPr//*[local-name()="decorative" and (@val="1" or @val="true")]'):
+                    continue
                 alt_text = get_alt_text_from_shape(shape)
                 if not alt_text or not alt_text.strip():
                     issues.append({
