@@ -21,7 +21,7 @@ Dependencies:
 - Ollama with a vision model, optional, for --ai-alt-check (see ai_alt_check.py)
 
 Usage:
-python resource_scanner.py /path/to/presentations --mode strict
+python3 pptx_scanner.py /path/to/presentations --mode strict
 """
 
 import os
