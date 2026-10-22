@@ -6,10 +6,10 @@ Checks PowerPoint files against WCAG 2.2 AA-style criteria in bulk and reports w
 
 **`pptx_scanner.py`: local audit with rich reports.** Point it at a folder of `.pptx` files (searched recursively). It runs these checks, in `lenient` or `strict` mode:
 
-- missing or poor-quality alt text, including large images that look like scanned pages;
+- missing alt text, and in `strict` mode alt text that's too short, generic ("image"), a file name ("chart.png") or a default shape name ("Picture 3"), plus large images that look like scanned pages;
 - images of text (optional OCR with Tesseract);
 - slides without titles, and a deck-level heading check;
-- table header rows;
+- tables without PowerPoint's "Header Row" option set;
 - link text that doesn't describe the destination;
 - text contrast, using WCAG's 4.5:1 and 3:1 (large text) thresholds, with theme colours flagged for manual review;
 - reading order, as a position-based heuristic;

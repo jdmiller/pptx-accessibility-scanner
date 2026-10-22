@@ -24,6 +24,7 @@ python resource_scanner.py /path/to/presentations --mode strict
 """
 
 import os
+import re
 import sys
 import argparse
 import subprocess
@@ -99,166 +100,166 @@ FIX_INSTRUCTIONS = {
     'missing_alt_text': {
         'title': 'How to Fix: Missing Alt Text',
         'steps': [
-            '1. Right-click the image, chart, table, or diagram',
-            '2. Select "Edit Alt Text" or "Format Picture"',
-            '3. In the Alt Text pane, add a brief description of the image',
-            '4. If the image is purely decorative, leave the alt text field empty (don\'t write "decorative")',
-            '5. Good alt text is concise (1-2 sentences) and describes the content and function of the image'
+            'Right-click the image, chart, table, or diagram',
+            'Select "Edit Alt Text" or "Format Picture"',
+            'In the Alt Text pane, add a brief description of the image',
+            'If the image is purely decorative, leave the alt text field empty (don\'t write "decorative")',
+            'Good alt text is concise (1-2 sentences) and describes the content and function of the image'
         ],
         'wcag': 'WCAG 2.2 - 1.1.1 Non-text Content'
     },
     'missing_language': {
         'title': 'How to Fix: Missing Language',
         'steps': [
-            '1. Go to File > Info',
-            '2. Click "Properties" > "Advanced Properties"',
-            '3. Go to the "Summary" tab',
-            '4. Set the "Language" field to the appropriate language (e.g., "English (United States)")',
-            '5. Click OK to save'
+            'Go to File > Info',
+            'Click "Properties" > "Advanced Properties"',
+            'Go to the "Summary" tab',
+            'Set the "Language" field to the appropriate language (e.g., "English (United States)")',
+            'Click OK to save'
         ],
         'wcag': 'WCAG 2.2 - 3.1.1 Language of Page'
     },
     'incorrect_language': {
         'title': 'How to Fix: Incorrect Language',
         'steps': [
-            '1. Go to File > Info',
-            '2. Click "Properties" > "Advanced Properties"',
-            '3. Go to the "Summary" tab',
-            '4. Update the "Language" field to the correct language',
-            '5. Click OK to save'
+            'Go to File > Info',
+            'Click "Properties" > "Advanced Properties"',
+            'Go to the "Summary" tab',
+            'Update the "Language" field to the correct language',
+            'Click OK to save'
         ],
         'wcag': 'WCAG 2.2 - 3.1.1 Language of Page'
     },
     'insufficient_headings': {
         'title': 'How to Fix: Insufficient Headings',
         'steps': [
-            '1. Ensure at least 1 out of every 7 slides has a title',
-            '2. Use the built-in Title placeholder (not a text box)',
-            '3. Go to Home > Layout and choose a layout with a title placeholder',
-            '4. Enter a descriptive title that summarizes the slide content',
-            '5. Titles help screen reader users navigate the presentation'
+            'Ensure at least 1 out of every 7 slides has a title',
+            'Use the built-in Title placeholder (not a text box)',
+            'Go to Home > Layout and choose a layout with a title placeholder',
+            'Enter a descriptive title that summarizes the slide content',
+            'Titles help screen reader users navigate the presentation'
         ],
         'wcag': 'WCAG 2.2 - 1.3.1 Info and Relationships'
     },
     'missing_title': {
         'title': 'How to Fix: Missing Title',
         'steps': [
-            '1. Click on the title placeholder at the top of the slide',
-            '2. If no title placeholder exists, go to Home > Layout and choose a layout with a title',
-            '3. Enter a descriptive title that summarizes the slide content',
-            '4. Keep titles concise (5-10 words) but meaningful',
-            '5. Screen readers use titles to help users navigate between slides',
-            '6. Note: Some slides like dividers may not need titles, but most content slides should have them'
+            'Click on the title placeholder at the top of the slide',
+            'If no title placeholder exists, go to Home > Layout and choose a layout with a title',
+            'Enter a descriptive title that summarizes the slide content',
+            'Keep titles concise (5-10 words) but meaningful',
+            'Screen readers use titles to help users navigate between slides',
+            'Note: Some slides like dividers may not need titles, but most content slides should have them'
         ],
         'wcag': 'WCAG 2.2 - 1.3.1 Info and Relationships'
     },
     'insufficient_contrast': {
         'title': 'How to Fix: Insufficient Contrast',
         'steps': [
-            '1. Select the text with low contrast',
-            '2. Go to Home > Font Color or Shape Fill',
-            '3. Choose colors with a contrast ratio of at least 4.5:1',
-            '4. Use online contrast checkers (e.g., WebAIM Contrast Checker) to verify',
-            '5. Dark text on light backgrounds or light text on dark backgrounds usually works best'
+            'Select the text with low contrast',
+            'Go to Home > Font Color or Shape Fill',
+            'Choose colors with a contrast ratio of at least 4.5:1',
+            'Use online contrast checkers (e.g., WebAIM Contrast Checker) to verify',
+            'Dark text on light backgrounds or light text on dark backgrounds usually works best'
         ],
         'wcag': 'WCAG 2.2 - 1.4.3 Contrast (Minimum)'
     },
     'poor_alt_text': {
         'title': 'How to Fix: Poor Quality Alt Text',
         'steps': [
-            '1. Right-click the image and select "Edit Alt Text"',
-            '2. Replace generic text (e.g., "image", "picture") with a meaningful description',
-            '3. Describe what\'s important about the image in context',
-            '4. Keep it concise (1-2 sentences)',
-            '5. Don\'t start with "Image of..." or "Picture of..." - just describe the content'
+            'Right-click the image and select "Edit Alt Text"',
+            'Replace generic text (e.g., "image", "picture") with a meaningful description',
+            'Describe what\'s important about the image in context',
+            'Keep it concise (1-2 sentences)',
+            'Don\'t start with "Image of..." or "Picture of..." - just describe the content'
         ],
         'wcag': 'WCAG 2.2 - 1.1.1 Non-text Content'
     },
     'table_no_header': {
         'title': 'How to Fix: Table Missing Headers',
         'steps': [
-            '1. Select the first row of the table',
-            '2. Go to Table Design > Header Row (check the box)',
-            '3. Or manually bold the text in the first row',
-            '4. Make sure header text clearly describes each column',
-            '5. Screen readers use header rows to help users navigate tables'
+            'Select the first row of the table',
+            'Go to Table Design > Header Row (check the box)',
+            'Or manually bold the text in the first row',
+            'Make sure header text clearly describes each column',
+            'Screen readers use header rows to help users navigate tables'
         ],
         'wcag': 'WCAG 2.2 - 1.3.1 Info and Relationships'
     },
     'poor_link_text': {
         'title': 'How to Fix: Poor Link Text',
         'steps': [
-            '1. Select the hyperlink text',
-            '2. Replace generic text like "click here" with descriptive text',
-            '3. The link text should describe where the link goes or what it does',
-            '4. Example: Instead of "Click here for the report", use "Download the Q3 Financial Report"',
-            '5. Screen reader users often navigate by links, so descriptive text is essential'
+            'Select the hyperlink text',
+            'Replace generic text like "click here" with descriptive text',
+            'The link text should describe where the link goes or what it does',
+            'Example: Instead of "Click here for the report", use "Download the Q3 Financial Report"',
+            'Screen reader users often navigate by links, so descriptive text is essential'
         ],
         'wcag': 'WCAG 2.2 - 2.4.4 Link Purpose (In Context)'
     },
     'reading_order': {
         'title': 'How to Fix: Reading Order Issues',
         'steps': [
-            '1. Go to Home > Arrange > Selection Pane',
-            '2. The reading order is bottom-to-top in the Selection Pane',
-            '3. Drag items to reorder them so they match the visual order',
-            '4. Test with a screen reader (e.g., NVDA, JAWS) to verify',
-            '5. Alternatively, use Home > Arrange > Send to Back/Bring to Front'
+            'Go to Home > Arrange > Selection Pane',
+            'The reading order is bottom-to-top in the Selection Pane',
+            'Drag items to reorder them so they match the visual order',
+            'Test with a screen reader (e.g., NVDA, JAWS) to verify',
+            'Alternatively, use Home > Arrange > Send to Back/Bring to Front'
         ],
         'wcag': 'WCAG 2.2 - 1.3.2 Meaningful Sequence'
     },
     'image_of_text': {
         'title': 'How to Fix: Image of Text',
         'steps': [
-            '1. Replace the image with actual text using PowerPoint text boxes',
-            '2. If you must use an image, ensure it has descriptive alt text that includes the text content',
-            '3. Use high-resolution images if text must be in an image',
-            '4. Consider providing a text alternative in the slide notes',
-            '5. Text in images cannot be resized, recolored, or read by screen readers'
+            'Replace the image with actual text using PowerPoint text boxes',
+            'If you must use an image, ensure it has descriptive alt text that includes the text content',
+            'Use high-resolution images if text must be in an image',
+            'Consider providing a text alternative in the slide notes',
+            'Text in images cannot be resized, recolored, or read by screen readers'
         ],
         'wcag': 'WCAG 2.2 - 1.4.5 Images of Text'
     },
     'scanned_image': {
         'title': 'How to Fix: Scanned Image',
         'steps': [
-            '1. If this is a scanned document, consider recreating it as actual PowerPoint content',
-            '2. Extract text from the scanned image using OCR tools',
-            '3. Add the extracted text to the slide as actual text (not an image)',
-            '4. If scanning is necessary, add comprehensive alt text describing all content',
-            '5. Scanned images are inaccessible to screen readers and cannot be searched or resized'
+            'If this is a scanned document, consider recreating it as actual PowerPoint content',
+            'Extract text from the scanned image using OCR tools',
+            'Add the extracted text to the slide as actual text (not an image)',
+            'If scanning is necessary, add comprehensive alt text describing all content',
+            'Scanned images are inaccessible to screen readers and cannot be searched or resized'
         ],
         'wcag': 'WCAG 2.2 - 1.1.1 Non-text Content'
     },
     'auto_advance_transition': {
         'title': 'How to Fix: Auto-Advance Transition',
         'steps': [
-            '1. Click on the slide thumbnail',
-            '2. Go to Transitions tab',
-            '3. Under "Timing", uncheck "After" or set timing to 0',
-            '4. Check "On Mouse Click" to require user interaction',
-            '5. Auto-advancing slides prevent users from reading at their own pace'
+            'Click on the slide thumbnail',
+            'Go to Transitions tab',
+            'Under "Timing", uncheck "After" or set timing to 0',
+            'Check "On Mouse Click" to require user interaction',
+            'Auto-advancing slides prevent users from reading at their own pace'
         ],
         'wcag': 'WCAG 2.2 - 2.2.2 Pause, Stop, Hide'
     },
     'excessive_animations': {
         'title': 'How to Fix: Excessive Animations',
         'steps': [
-            '1. Go to Animations tab',
-            '2. Click Animation Pane to see all animations',
-            '3. Select unnecessary animations and click "Remove"',
-            '4. Keep only essential animations (3-5 maximum per slide)',
-            '5. Too many animations can be distracting and cause motion sickness'
+            'Go to Animations tab',
+            'Click Animation Pane to see all animations',
+            'Select unnecessary animations and click "Remove"',
+            'Keep only essential animations (3-5 maximum per slide)',
+            'Too many animations can be distracting and cause motion sickness'
         ],
         'wcag': 'WCAG 2.2 - 2.3.3 Animation from Interactions'
     },
     'auto_play_animation': {
         'title': 'How to Fix: Auto-Play Animation',
         'steps': [
-            '1. Go to Animations tab and open Animation Pane',
-            '2. Select the auto-playing animation',
-            '3. Click the dropdown arrow and choose "Effect Options"',
-            '4. Under "Timing", change "Start" from "With Previous" or "After Previous" to "On Click"',
-            '5. Users should control when animations play, not have them play automatically'
+            'Go to Animations tab and open Animation Pane',
+            'Select the auto-playing animation',
+            'Click the dropdown arrow and choose "Effect Options"',
+            'Under "Timing", change "Start" from "With Previous" or "After Previous" to "On Click"',
+            'Users should control when animations play, not have them play automatically'
         ],
         'wcag': 'WCAG 2.2 - 2.2.2 Pause, Stop, Hide'
     },
@@ -306,6 +307,12 @@ def has_poor_quality_alt_text(alt_text):
     if len(alt_text) < 5:
         return True
     if any(alt_lower == indicator for indicator in poor_indicators):
+        return True
+    # A file name ("chart.png", "IMG_1234.JPG") describes the file, not the image.
+    if re.fullmatch(r'\S+\.(png|jpe?g|gif|bmp|tiff?|svg|emf|wmf|webp|heic)', alt_lower):
+        return True
+    # PowerPoint's default shape names ("Picture 3") aren't descriptions either.
+    if re.fullmatch(r'(picture|image|graphic|chart|diagram) ?\d+', alt_lower):
         return True
     return False
 
@@ -760,11 +767,10 @@ def audit_pptx_fast(pptx_path, mode='lenient', expected_language='en-US'):
             # Check tables
             if shape.has_table:
                 table = shape.table
-                if len(table.rows) > 0:
-                    first_row = table.rows[0]
-                    has_header = any(cell.text_frame and cell.text_frame.text.strip() for cell in first_row.cells)
-                    if not has_header:
-                        issues_by_slide[slide_idx].append(('table_no_header', 'Table is missing header row'))
+                # Screen readers rely on PowerPoint's "Header Row" option
+                # (firstRow on the table), not on whether row 1 has text.
+                if len(table.rows) > 0 and not table.first_row:
+                    issues_by_slide[slide_idx].append(('table_no_header', 'Table does not have the "Header Row" option set'))
             
             # Check text for links and contrast
             if shape.has_text_frame:
