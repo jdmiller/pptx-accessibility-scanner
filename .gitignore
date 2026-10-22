@@ -7,3 +7,4 @@ reports/
 public/
 *.log
 *.csv
+.ai_alt_review_cache.json
